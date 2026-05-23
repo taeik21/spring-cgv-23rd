@@ -2666,11 +2666,10 @@ WHERE title LIKE '%미션%' AND deleted_at IS NULL;
 ### Full Text 인덱스 생성 및 쿼리 변경
 
 ```java
-CREATE FULLTEXT INDEX idx_ft_title ON movie(title);
+ALTER TABLE movie ADD FULLTEXT INDEX idx_movie_title_ft (title) WITH PARSER ngram;
 
-SELECT * FROM movie
-WHERE MATCH(title) AGAINST('미션' IN NATURAL LANGUAGE MODE)
-  AND deleted_at IS NULL;
+@Query(value = "SELECT * FROM movie WHERE MATCH(title) AGAINST(:keyword IN BOOLEAN MODE) AND deleted_at IS NULL", nativeQuery = true)
+    List<Movie> searchByTitleFullText(@Param("keyword") String keyword);
 ```
 
 - `type = fulltext`
@@ -2692,7 +2691,7 @@ public interface ReservationRepository extends JpaRepository<Reservation, Long> 
 }    
 ```
 
-### 실제 실행되는 SQL
+### 실행되는 SQL
 
 ```java
 SELECT * FROM reservation                                                                                                                                                           
@@ -2705,7 +2704,20 @@ WHERE status = 'PENDING' AND created_at < '2025-01-01 00:00:00';
 ### 인덱스 적용
 
 ```java
-CREATE INDEX idx_reservation_status_created_at ON reservation (status, created_at);
+@Entity
+@Getter
+@Table(
+    uniqueConstraints = {
+        @UniqueConstraint(name = "UQ_PAYMENT_ID", columnNames = {"payment_id"})
+    },
+    indexes = {
+        @Index(name = "idx_reservation_status_created_at", columnList = "status, created_at")
+    }
+)
+@NoArgsConstructor(access = AccessLevel.PROTECTED)
+public class Reservation extends BaseTimeEntity {
+	...
+}
 ```
 
 - `type = range`
@@ -2734,7 +2746,15 @@ WHERE location = '서울' AND deleted_at IS NULL;
 ### 인덱스 생성
 
 ```java
-CREATE INDEX idx_theater_location ON theater (location);
+@Entity
+@Getter
+@NoArgsConstructor(access = AccessLevel.PROTECTED)
+@Table(indexes = {
+    @Index(name = "idx_theater_location", columnList = "location")
+})
+public class Theater extends BaseSoftDeleteEntity {
+	...
+}
 ```
 
 - `type = ref`
