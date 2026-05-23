@@ -1,0 +1,1 @@
+ALTER TABLE movie ADD FULLTEXT INDEX idx_movie_title_ft (title) WITH PARSER ngram;

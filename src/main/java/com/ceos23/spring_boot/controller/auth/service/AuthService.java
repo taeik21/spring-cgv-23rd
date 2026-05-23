@@ -48,7 +48,6 @@ public class AuthService {
         userRepository.save(user);
     }
 
-    @Transactional
     public TokenResponse login(LoginRequest request) {
         User user = userRepository.findByEmailAndDeletedAtIsNull(request.email())
                 .orElseThrow(() -> new BusinessException(ErrorCode.USER_NOT_FOUND));
@@ -73,7 +72,6 @@ public class AuthService {
         return new TokenResponse(accessToken, refreshToken);
     }
 
-    @Transactional
     public TokenResponse reissue(String refreshToken) {
         String redisKey = RT_PREFIX + refreshToken;
 
@@ -99,7 +97,6 @@ public class AuthService {
         return new TokenResponse(newAccessToken, newRefreshToken);
     }
 
-    @Transactional
     public void logout(String accessToken, String refreshToken) {
 
         if (refreshToken != null)

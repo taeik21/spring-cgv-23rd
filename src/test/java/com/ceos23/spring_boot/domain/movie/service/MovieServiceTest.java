@@ -57,7 +57,7 @@ class MovieServiceTest {
         given(movieRepository.findAllByDeletedAtIsNull()).willReturn(List.of(movie1, movie2));
 
         // When
-        List<MovieInfo> result = movieService.findMovies(command);
+        List<MovieInfo> result = movieService.findAllMovies();
 
         // Then
         assertThat(result).hasSize(2);
@@ -81,7 +81,7 @@ class MovieServiceTest {
         given(movieRepository.findByTitleContainingAndDeletedAtIsNull(keyword)).willReturn(List.of(movie));
 
         // When
-        List<MovieInfo> result = movieService.findMovies(command);
+        List<MovieInfo> result = movieService.searchMovies(keyword);
 
         // Then
         assertThat(result).hasSize(1);

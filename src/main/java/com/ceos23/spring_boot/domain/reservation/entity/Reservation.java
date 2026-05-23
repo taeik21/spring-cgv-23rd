@@ -22,9 +22,14 @@ import java.util.UUID;
 
 @Entity
 @Getter
-@Table(uniqueConstraints = {
+@Table(
+    uniqueConstraints = {
         @UniqueConstraint(name = "UQ_PAYMENT_ID", columnNames = {"payment_id"})
-})
+    },
+    indexes = {
+        @Index(name = "idx_reservation_status_created_at", columnList = "status, created_at")
+    }
+)
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class Reservation extends BaseTimeEntity {
     @Id @GeneratedValue(strategy = GenerationType.IDENTITY)

@@ -32,7 +32,7 @@ public class MovieService {
     }
 
     public List<MovieInfo> searchMovies(String title) {
-        List<Movie> movies = movieRepository.findByTitleContainingAndDeletedAtIsNull(title);
+        List<Movie> movies = movieRepository.searchByTitleFullText(title);
         return movies.stream()
                 .map(MovieInfo::from)
                 .toList();

@@ -50,7 +50,7 @@ class TheaterServiceTest {
         given(theaterRepository.findAllByDeletedAtIsNull()).willReturn(List.of(theater1, theater2));
 
         //when
-        List<TheaterInfo> result = theaterService.findTheaters(command);
+        List<TheaterInfo> result = theaterService.findAllTheaters();
 
         //then
         assertThat(result.size()).isEqualTo(2);
@@ -82,7 +82,7 @@ class TheaterServiceTest {
         given(theaterRepository.findByLocationAndDeletedAtIsNull(location)).willReturn(List.of(theater1));
 
         //when
-        List<TheaterInfo> result = theaterService.findTheaters(command);
+        List<TheaterInfo> result = theaterService.searchTheaters(location);
 
         //then
         assertThat(result.size()).isEqualTo(1);
