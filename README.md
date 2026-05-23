@@ -2382,3 +2382,360 @@ try {
 ```
 
 - 외부 결제는 완료됐는데 DB 반영 실패한 건 추적
+---
+# 트랜잭션 전파 속성
+
+: 이미 트랜잭션이 진행 중일 때, 또 다른 트랜잭션이 시작되면 어떻게 처리할 지 결정
+
+쉽게 말해, **A라는 함수(트랜잭션)가 B라는 함수(트랜잭션)를 호출할 때, 이 둘을 하나의 묶음으로 볼지 아니면 각자도생할지**를 정하는 규칙
+
+---
+
+## **1. REQUIRED (디폴트)**
+
+하나의 물리적 트랜잭션 공유 **→ 둘 중 하나만 에러 나도 전체 롤백**
+
+- **동작**
+    
+    경우1. 이미 진행 중인 트랜잭션이 있으면 **합류**
+    
+    경우2. 없으면 **새로 생성**
+    
+- **상황**
+    - `주문 서비스` -> `재고 감소`
+        - 주문이 실패하면 재고 감소도 취소
+        - 재고가 없으면 주문도 취소
+
+## **2. REQUIRES_NEW**
+
+항상 **새로운 트랜잭션** 시작
+
+- **동작**
+    1. 이미 진행 중인 트랜잭션이 있다면 잠시 대기시키고, **새 트랜잭션 생성**
+    2. 작업이 끝나면 다시 기존 트랜잭션 재개
+- **상황**
+    - `결제 서비스` -> `로그 저장`
+        - 결제가 실패해서 롤백되도, 결제 시도 로그는 DB에 남겨야할 때
+            - 로그 저장 중에 에러가 나도 결제 로직 정상 실행
+            - 결제가 롤백되어도 로그 **커밋**
+    - 알림 발송
+
+## **3. NESTED**
+
+이미 진행 중인 트랜잭션이 있으면, **중첩 트랜잭션** 생성
+
+- **동작**
+    
+    경우1. 자식이 실패하면 **세이브포인트까지만 롤백**하고, 부모는 계속 진행
+    
+    **경우2. 부모가 롤백되면 자식도 같이 롤백**
+    
+- JDBC 세이브 포인트 지원하는 환경에서만 동작..
+- **상황**
+    - `메인 경품 당첨` -> `축하 포인트 지급`
+        - 포인트 지급 실패해도 당첨은 유지 (포인트만 롤백)
+
+## **4. MANDATORY**
+
+부모 트랜잭션 내에서만 실행되는 로직 
+
+→ 독립적으로는 절대 수행되면 안 되는 로직에 사용
+
+- **동작**
+    
+    경우1. 이미 진행 중인 트랜잭션이 있으면 **합류**
+    
+    경우2. 없으면 예외 던짐
+    
+- **상황**
+    - `포인트 차감`
+        - 단독으로 실행되면 위험
+        - `상품 구매`와 같은 부모 로직안에서 수행되어야함
+
+## **5. SUPPORTS**
+
+트랜잭션이 반드시 필요하진 않음 / 있으면 물리적 트랜잭션 공유
+
+- **동작**
+    
+    경우1. 있으면 **합류**
+    
+    경우2. 없으면 **트랜잭션 없이** 진행
+    
+- **상황**
+    - **동일한 메서드가 두 곳에서 사용될 때**
+        
+        **경우1. 조회만 할 때** 
+        
+        - 메인 페이지에서 단순 상품 목록을 볼 때 `@Transactional` 없이 실행하여 DB 커넥션 점유 시간을 줄이고 성능 높임
+        
+        **경우2. 주문 중일 때**
+        
+        - `주문 로직` 중간에 `상품 정보 조회`해야 한다면, 
+        부모 트랜잭션에 합류해서 **방금 수정한(하지만 아직 커밋 안 된) 가격 정보**를 읽어야함
+
+## **6. NOT_SUPPORTED**
+
+트랜잭션이 있으면 안 되는 무거운 작업
+
+- **동작**
+    1. 트랜잭션이 있으면 잠시 **보류** 
+    2. 트랜잭션 없이 작동 
+    3. 작업 끝나면 다시 기존 트랜잭션을 재개
+- **상황**
+    - `로그 파일 쓰기`나 `외부 API 호출`
+        - 시간이 오래 걸리는 작업을 할 때
+        - DB 커넥션을 오래 붙잡고 있지 않기 위해
+
+## **7. NEVER**
+
+트랜잭션 있으면 안되는 로직 (↔ NOT_SUPPORTED: 트랜잭션 내에서, 트랜잭션 없이 독립적으로 작동)
+
+- **동작**
+    - 트랜잭션 있으면 바로 **예외** 발생 (없어야만 정상 작동)
+- **상황**
+    - 트랜잭션 걸려 있으면 안 되는 레거시 시스템과의 연동
+    - 특수한 성능 최적화 상황
+
+### **실무 꿀팁: 롤백 마크(Rollback-only)**
+
+`REQUIRED`를 쓸 때 가장 많이 하는 실수
+
+자식에서 예외가 발생했는데 부모가 `try-catch`로 예외를 잡아버리면?
+
+성공할 것 같지만 `UnexpectedRollbackException`이 발생하며 전체가 롤백
+이미 자식이 물리 트랜잭션에 "이 트랜잭션은 망했음(Rollback-only)이라고 마킹을 해버림
+
+이 경우 `REQUIRES_NEW`나 `NESTED`를 써야 의도한 대로 동작
+
+---
+
+# 트랜잭션 분석
+
+## `AuthService`
+
+### 1. `login()`/ `reissue()`: DB 읽기만 하는데 쓰기 트랜잭션 시작
+
+```yaml
+@Transactional
+public TokenResponse login(LoginRequest request) { ... }
+```
+
+- `user` 조회 후 비밀번호 검증 후, **accessToken, refreshToken** 발급
+    - 쓰기 작업 X
+- `@Transactional(readOnly=true)`로 최적화
+
+```yaml
+@Transactional
+public TokenResponse reissue(String refreshToken) { ... }
+```
+
+- **RefreshToken**을 **Redis** 조회 및 저장
+- `user` 조회 후 accessToken 생성
+    - 역시 쓰기 작업 X
+- `@Transactional(readOnly=true)`로 최적화
+
+### 2. `logout()`은 DB 접근 자체가 없는데 `@Transactional` 적용
+
+```yaml
+@Transactional
+public void logout(String accessToken, String refreshToken) { ... } 
+```
+
+- **Redis**에서 refreshToken 삭제 및 accessToken 블랙리스트 등록
+    - DB 접근 X
+- `@Transactional` 삭제
+
+---
+
+# 인덱스 종류
+
+## **저장 방식에 따른 분류**
+
+### **1. 클러스터형 인덱스 (Clustered Index)**
+
+- 인덱스 자체가 실제 데이터와 함께 저장
+    - **인덱스 순서대로 데이터 정렬된 형태**
+- 테이블당 **하나**만 만들 수 있음
+    - 주로 **Primary Key**
+- 데이터 자체가 정렬되어 있어, 범위 검색에 매우 빠름
+
+### **2. 비클러스터형 인덱스 (Non-Clustered Index / Secondary Index)**
+
+- 별도의 공간에 **인덱스 페이지** 만들어, 데이터 주소 기록하는 방식
+    - 실제 데이터는 무작위로 존재
+    - 인덱스 페이지 내 인덱스는 정렬된 상태 (**B-Tree** 기준)
+- 테이블당 **여러 개**를 만들 수 있음
+- 인덱스에서 위치 찾고, 실제 데이터를 찾아가는 **RID(Row ID) 조회 과정** 거침
+    - 클러스터형보다는  느림
+
+## **알고리즘에 따른 분류**
+
+### **1. B-Tree 인덱스 (Balanced Tree)**
+
+- **가장 대중적인 방식**
+    - 대부분의 RDBMS(MySQL, Oracle 등) 디폴트
+- 자식 노드가 2개 이상인 트리 구조
+- 데이터가 정렬된 상태로 유지
+- **어떤 데이터**를 찾아도 일정한 **시간 복잡도 O(log N) 보장!!**
+
+### **2. Hash 인덱스**
+
+- 칼럼 값을 해시 함수로 고유한 주소값으로 변환해 저장
+- **정확히 일치**하는 값을 찾을 때, 속도가 **O(1)로 가장 빠름**
+    - 값이 조금만 달라도 해시값이 완전히 바뀜 → **범위 검색(`>` , `<`), 정렬에는 아예 쓸 수 X**
+
+## **칼럼 구성 및 용도에 따른 분류**
+
+### **1. 단일 인덱스 vs 복합 인덱스 (Composite Index)**
+
+- **단일 인덱스:** 칼럼 하나만 인덱스로 지정
+- **복합 인덱스:** 여러 칼럼을 묶어 인덱스로 지정
+    - **칼럼 순서** 매우 중요!
+    - `’성+이름’` 순으로 인덱스를 만들면,
+        1. `‘성 + 이름’` → 인덱스 탐
+        2. `‘성’` → 인덱스 탐
+        3. `'이름'` → 인덱스 못 탐..
+
+### **2. 유니크 인덱스 (Unique Index)**
+
+- 중복 값을 허용하지 않는 인덱스
+    - 데이터 무결성 확보
+
+### **3. 전문 검색 인덱스 (Full-Text Index)**
+
+- 긴 문장이나 텍스트 내용 전체를 검색할 때 사용
+- 일반 인덱스는 `LIKE '%단어%'`를 쓰면 인덱스를 못 탐
+    - **전문 검색 인덱스**는 단어 단위로 쪼개므로 인덱싱 가능!!
+
+## 인덱스 단점
+
+1. **쓰기 성능 저하**
+    - 데이터를 넣을 때마다 인덱스 페이지도 정렬 및 업데이트
+2. **수정**
+    - 인덱스 값 바꾸면, 인덱스 페이지의 값도 변경해줘야함
+    - 필요하면 인덱스 정렬도 재수행
+3. **저장 공간**
+    - 인덱스 자체가 별도의 데이터라 용량 차지
+    - 보통 테이블 크기의 **10~30%** 정도를 추가로 사용
+4. **카디널리티**
+    - 중복도가 높은 칼럼에 인덱스 걸면, 오히려 성능 떨어짐
+        - 값이 다양한 칼럼에 걸어야 성능 향상
+    - **100만 명의 유저 중 `남성` 찾는 경우**
+        
+        **경우1. 인덱스 있을 때**
+        
+        1. DB는 인덱스 뒤져 `남성` 50만 명의 주소 모두 확인 
+        2. 그리고 그 **50만 번의 주소 점프…**
+        
+        **경우2. 인덱스가 없을 때**
+        
+        - 100만 장 Full Scan
+        - 50만 번 점프하는 것보다 훨씬 효율적
+
+## 결론
+
+인덱스는 **조회 빈도가 높고, 수정은 적으며, 값의 종류가 다양한 칼럼**에 걸자!
+
+---
+
+# 성능 최적화
+
+## 1. Movie 제목 검색 (LIKE '%...%')
+
+```java
+public interface MovieRepository extends JpaRepository<Movie, Long> {
+    List<Movie> findByTitleContainingAndDeletedAtIsNull(String title);
+    ...
+}
+```
+
+### 실행되는 SQL문
+
+```java
+SELECT * 
+FROM movie 
+WHERE title LIKE '%미션%' AND deleted_at IS NULL;
+```
+
+- `type = ALL`
+- `LIKE '%...%`: B-tree 인덱스 앞부분을 확정할 수 없어서 인덱스 못 탐
+
+![쿼리최적화](./images/쿼리최적화전1.png)
+
+### Full Text 인덱스 생성 및 쿼리 변경
+
+```java
+CREATE FULLTEXT INDEX idx_ft_title ON movie(title);
+
+SELECT * FROM movie
+WHERE MATCH(title) AGAINST('미션' IN NATURAL LANGUAGE MODE)
+  AND deleted_at IS NULL;
+```
+
+- `type = fulltext`
+- `LIKE '%미션%'`:"미션"이라는 글자 위치 알 수 X
+    
+    → 인덱스 만들어도 MySQL 옵티마이저는 여전히 인덱스 안 쓰고, 테이블 통째로 읽음
+    
+    - `EXPLAIN` 결과에 여전히 `type: ALL`
+- 인덱스 사용하도록 쿼리 변경
+
+![쿼리최적화](./images/쿼리최적화후1.png)
+
+## 2. 만료 예약 확인
+
+```java
+public interface ReservationRepository extends JpaRepository<Reservation, Long> {
+    List<Reservation> findByStatusAndCreatedAtBefore(ReservationStatus status, LocalDateTime cutoffTime);
+    ...
+}    
+```
+
+### 실제 실행되는 SQL
+
+```java
+SELECT * FROM reservation                                                                                                                                                           
+WHERE status = 'PENDING' AND created_at < '2025-01-01 00:00:00';
+```
+
+- `type = ALL`
+![쿼리최적화](./images/쿼리최적화전2.png)
+
+### 인덱스 적용
+
+```java
+CREATE INDEX idx_reservation_status_created_at ON reservation (status, created_at);
+```
+
+- `type = range`
+![쿼리최적화](./images/쿼리최적화후2.png)
+
+## 3. Theater 지점 검색
+
+```java
+public interface TheaterRepository extends JpaRepository<Theater, Long> {
+    List<Theater> findByLocationAndDeletedAtIsNull(String location);
+    ...
+}
+```
+
+### 실행되는 SQL문
+
+```java
+SELECT * 
+FROM theater 
+WHERE location = '서울' AND deleted_at IS NULL;
+```
+
+- `type = ALL`
+![쿼리최적화](./images/쿼리최적화전3.png)
+
+### 인덱스 생성
+
+```java
+CREATE INDEX idx_theater_location ON theater (location);
+```
+
+- `type = ref`
+![쿼리최적화](./images/쿼리최적화후3.png)
